@@ -1,11 +1,59 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { keyboardLayout, numpadLayout, charMatrix } from '../data/characters'
+import { useTimer } from '../composables/useTimer'
+import { useScreenSaver } from '../composables/useScreenSaver'
+import badwords from '../data/badwords'
+import HardwareDiag from './HardwareDiag.vue'
 
 const defaultTimeCounter = 10 // seconds
 const isFullscreen = ref(false)
-const timeCountdown = ref(defaultTimeCounter)
-const timerInterval = ref<number | null>(null)
+const btnStartState = ref<number>(0)
+
+const { timeCountdown, startTimer, stopTimer, resetTimer } = useTimer(defaultTimeCounter, () => {
+  clearText()
+})
+const { screenArray, startAnimation, stopAnimation } = useScreenSaver()
+const isScreenSaverActive = ref(false)
+const SCREEN_SAVER_DELAY = 30000 // 3 seconds
+let screenSaverTimeout: number | null = null
+
+// Start screen saver after inactivity
+const initializeScreenSaver = () => {
+  if (screenSaverTimeout) {
+    clearTimeout(screenSaverTimeout)
+  }
+
+  screenSaverTimeout = setTimeout(() => {
+    isScreenSaverActive.value = true
+    charGrids.value = screenArray.value // Use screen saver array
+    startAnimation(200) // Start animation with 200ms speed
+  }, SCREEN_SAVER_DELAY)
+}
+
+// Reset screen saver timer on activity
+const resetScreenSaver = () => {
+  if (isScreenSaverActive.value) {
+    isScreenSaverActive.value = false
+    stopAnimation()
+    charGrids.value = [getCharGrid('default'), getCharGrid('default'), getCharGrid('default')]
+  }
+  initializeScreenSaver()
+}
+
+// Initialize screen saver on mount
+onMounted(() => {
+  initializeScreenSaver()
+})
+
+// Clean up on unmount
+onUnmounted(() => {
+  if (screenSaverTimeout) {
+    clearTimeout(screenSaverTimeout)
+  }
+  stopAnimation()
+})
+
 
 const toggleFullscreen = async () => {
   try {
@@ -25,59 +73,49 @@ const displayText = ref('')  // Add this to store the clicked characters
 const charGrids = ref([getCharGrid('default'), getCharGrid('default'), getCharGrid('default')])
 
 const kbdClick = (char: string) => {
+  resetScreenSaver()
   if (displayText.value.length < 3) {
     displayText.value += char  // Append the clicked character to displayText
+    if (badwords.includes((displayText.value).toUpperCase())) {
+      clearText()
+      return
+    }
     Array.from(char).forEach(element => {
       charGrids.value[displayText.value.length - 1] = getCharGrid(element)
     })
+    if (displayText.value.length === 3) {
+      btnStartState.value = 2
+    } else {
+      btnStartState.value = 1
+    }
     startTimer()
   }
 }
 
 const clearText = () => {
+  resetScreenSaver()
+  btnStartState.value = 0
   charGrids.value = [getCharGrid('default'), getCharGrid('default'), getCharGrid('default')]
   displayText.value = ''  // Add a function to clear the text
   resetTimer()
 }
 
 const backspace = () => {
+  resetScreenSaver()
   displayText.value = displayText.value.slice(0, -1)
+  if (displayText.value.length === 0) {
+    btnStartState.value = 0
+  } else {
+    btnStartState.value = 1
+  }
   charGrids.value[displayText.value.length] = getCharGrid('default')
   startTimer()
 }
 
 function getCharGrid(char: string) {
-  return charMatrix[char.toUpperCase()] || charMatrix['default'];
+  return charMatrix[char.toUpperCase()] || charMatrix['default']; // ignore
 }
 
-// Timer functions
-const startTimer = () => {
-  // Clear any existing interval first
-  stopTimer()
-  
-  timeCountdown.value = defaultTimeCounter
-  timerInterval.value = setInterval(() => {
-    if (timeCountdown.value > 0) {
-      timeCountdown.value--
-      if (timeCountdown.value === 0) {
-        stopTimer()
-        clearText() // Clear text when timer reaches 0
-      }
-    }
-  }, 1000)
-}
-
-const stopTimer = () => {
-  if (timerInterval.value) {
-    clearInterval(timerInterval.value)
-    timerInterval.value = null
-  }
-}
-
-const resetTimer = () => {
-  stopTimer()
-  timeCountdown.value = defaultTimeCounter
-}
 </script>
 
 <template>
@@ -85,7 +123,9 @@ const resetTimer = () => {
     <!-- Display the three character blocks -->
     <div v-for="(charGrid, index) in charGrids" :key="index" class="char-block">
       <div v-for="(row, rowIndex) in charGrid" :key="rowIndex" class="row">
-        <div v-for="(cell, cellIndex) in row" :key="cellIndex" :class="['cell', { 'filled': cell === 1 }]"></div>
+        <div v-for="(cell, cellIndex) in row" :key="cellIndex"
+          :class="['cell', { 'filled': cell === 1, 'filled-2': cell === 2, 'filled-3': cell === 3, 'filled-4': cell === 4 }]">
+        </div>
       </div>
     </div>
   </div>
@@ -115,19 +155,25 @@ const resetTimer = () => {
 
       <!-- Special Keys -->
       <div class="special-keys mt-2">
-        <div class="special-key bg-accent text-accent-content grid h-10 w-32 place-content-center rounded mb-2" @click="backspace">BACKSPACE</div>
-        <div class="special-key bg-accent text-accent-content grid h-10 w-32 place-content-center rounded mb-2" @click="clearText">CLEAR</div>
-        <button class="btn btn-outline">START</button>
+        <button class="btn btn-neutral h-10 w-40 mb-2" @click="backspace">BACKSPACE</button>
+        <button class="btn btn-error h-10 w-40 mb-2" @click="clearText">CLEAR</button>
+        <button class="btn w-40"
+          :class="{ 'btn-success': btnStartState === 2, 'btn-warning': btnStartState === 1 }">START</button>
       </div>
     </div>
   </div>
-  <button class="btn btn-outline" @click="toggleFullscreen">
+  <button class="btn btn-outline btnSetting" onclick="my_modal_3.showModal()">
+    Settings
+  </button>
+  <button class="btn btn-outline btnFsc" @click="toggleFullscreen">
     {{ isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen' }}
   </button>
+  <HardwareDiag />
 </template>
 
 <style scoped>
 .keyboard-wrapper {
+  /* background-color: burlywood; */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -143,10 +189,12 @@ const resetTimer = () => {
 
 .keyboard-section {
   flex-shrink: 0;
+  /* background: red; */
 }
 
 .numpad-section {
   flex-shrink: 0;
+  /* background: green; */
 }
 
 .kbd {
@@ -155,6 +203,8 @@ const resetTimer = () => {
   border: 1px solid #ccc;
   border-radius: 4px;
   background-color: #f8f8f8;
+  width: 3.5rem;
+  height: 3.5rem;
 }
 
 .kbd:hover {
@@ -198,10 +248,34 @@ const resetTimer = () => {
 
 .filled {
   background-color: black;
-  /* Black for filled cells */
 }
 
-.special-key {
-  cursor: pointer;
+.filled-2 {
+  background-color: red;
+}
+
+.filled-3 {
+  background-color: green;
+}
+
+.filled-4 {
+  background-color: blue;
+}
+
+.special-keys {
+  display: flex;
+  flex-direction: column;
+}
+
+.btnFsc {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+}
+
+.btnSetting {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
 }
 </style>
